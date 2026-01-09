@@ -1,43 +1,156 @@
-# Proxmox Multi-Distro LXC Updater
+# Proxmox Multi-OS Updater
 
-A robust Bash script designed for Proxmox VE hosts to automatically detect and update the operating systems of all running LXC containers. It supports a wide range of Linux distributions by identifying the package manager in use.
+This script automates system updates on a **Proxmox host**, all **running LXC containers**, and all **running virtual machines (VMs)**, handling multiple Linux distributions transparently.
 
-## 🚀 Features
+It is designed for homelabs and production environments where mixed guest operating systems are common.
 
-* **Automatic OS Detection:** Identifies the container OS by checking for apk, apt, dnf, pacman, or zypper.
-* **Host & Guest Updates:** Updates the Proxmox host node first, then iterates through containers.
-* **Smart Skipping:** * Automatically skips containers that are powered off.
-    * Supports a "Blacklist" to exclude specific Container IDs (e.g., ID 210).
-* **Comprehensive Logging:** Redirects all detailed output to /var/log/lxc-update.log while providing a clean summary in the terminal.
-* **Alpine Compatibility:** Uses sh execution to ensure compatibility with Alpine's busybox/ash environment.
+---
 
-## 📦 Supported Distributions
+## Features
 
-| Family | Package Manager | Distributions |
-| :--- | :--- | :--- |
-| Debian | apt | Debian, Ubuntu, Kali |
-| Alpine | apk | Alpine Linux |
-| RedHat | dnf | Fedora, CentOS, AlmaLinux, Rocky |
-| Arch | pacman | Arch Linux |
-| SUSE | zypper | openSUSE |
+- Updates the **Proxmox host** (Debian-based)
+- Automatically updates **running LXC containers**
+- Automatically updates **running VMs** (via QEMU Guest Agent)
+- Detects the guest OS by available package manager
+- Supports multiple Linux distributions
+- Centralized logging
+- Colorized console output
+- Ability to exclude specific CTs/VMs
 
-## 🛠️ Installation & Usage
+---
 
-1. Upload the script to your Proxmox host (e.g., to /usr/local/bin/update-lxc.sh).
+## Supported Guest Operating Systems
+
+The script detects the OS by checking the available package manager:
+
+| Distribution        | Package Manager | Command Used              |
+|---------------------|-----------------|---------------------------|
+| Alpine Linux        | `apk`           | `apk update && apk upgrade` |
+| Debian / Ubuntu     | `apt-get`       | `apt-get update && dist-upgrade` |
+| RHEL / CentOS / Fedora | `dnf`       | `dnf update`              |
+| Arch Linux          | `pacman`        | `pacman -Syu`             |
+| openSUSE            | `zypper`        | `zypper refresh && update` |
+
+If no supported package manager is found, the update for that guest fails gracefully.
+
+---
+
+## Requirements
+
+### Proxmox Host
+
+- Proxmox VE (Debian-based)
+- Root privileges
+- `pct` and `qm` commands available
+- Network connectivity
+
+### Virtual Machines
+
+- **QEMU Guest Agent must be installed and running**
+- Guest must be powered on
+- SSH is *not* required
+
+### Containers
+
+- Container must be running
+- Shell (`sh`) available inside the container
+
+---
+
+## Configuration
+
+### Excluding Containers or VMs
+
+Edit the following line in the script:
+
+```
+EXCLUDE_IDS=" 210 "
+```
+
+Add one or more CTIDs / VMIDs separated by spaces:
+
+```
+EXCLUDE_IDS=" 101 210 305 "
+```
+
+These IDs will be skipped.
+
+---
+
+## Logging
+
+All output is logged to:
+
+```
+/var/log/proxmox-updater.log
+```
+
+The log includes:
+- Host updates
+- Per-CT updates
+- Per-VM updates
+- Package manager output
+- Errors
+
+Console output remains concise and human-readable.
+
+---
+
+## How It Works
+
+1. Updates the **Proxmox host** using `apt-get`
+2. Iterates through all **running LXC containers**
+   - Executes update commands directly inside the container
+3. Iterates through all **running VMs**
+   - Uses `qm guest exec`
+   - Extracts command output from JSON
+   - Writes clean logs
+4. Displays success or failure per guest
+
+---
+
+## Usage
+
+1. Copy the script to the Proxmox host:
+   ```
+   /usr/local/sbin/proxmox-updater.sh
+   ```
+
 2. Make it executable:
-   chmod +x /usr/local/bin/update-lxc.sh
-3. Run the script as root:
-   sudo /usr/local/bin/update-lxc.sh
+   ```
+   chmod +x /usr/local/sbin/proxmox-updater.sh
+   ```
 
-## ⚙️ Configuration
+3. Run as root:
+   ```
+   ./proxmox-updater.sh
+   ```
 
-To exclude specific containers from the update process, modify the exclusion logic in the script:
-if [ "$CTID" -eq 210 ]; then
-    echo "Skipping container $CTID (excluded)."
-    continue
-fi
+---
 
-## 📄 Logging
+## Automation (Optional)
 
-Monitor progress or troubleshoot errors by checking the log file:
-tail -f /var/log/lxc-update.log
+You can schedule the script via cron:
+
+```
+0 3 * * 0 /usr/local/sbin/proxmox-updater.sh
+```
+
+Runs every Sunday at 03:00.
+
+---
+
+## Safety Notes
+
+- Updates are **non-interactive**
+- Reboots are **not triggered automatically**
+- Always test in staging before production use
+- Consider snapshotting critical VMs before running
+
+---
+
+## License
+
+MIT License
+
+Use at your own risk.
