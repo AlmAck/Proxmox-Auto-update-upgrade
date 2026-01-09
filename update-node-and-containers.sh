@@ -13,9 +13,43 @@ EXCLUDE_IDS=" 210 "
 echo -e "${BLUE}Starting Proxmox Multi-OS Update...${NC}"
 echo "Started: $(date)" >> "$LOGFILE"
 
-# Update Host
+# Update Host (Proxmox is Debian-based)
 echo -e "${YELLOW}[HOST]${NC} Updating..."
 apt-get update && apt-get dist-upgrade -y >> "$LOGFILE" 2>&1
+
+# Shared updater snippet for guests (LXC + VM)
+# Supports: Alpine(apk), Debian/Ubuntu(apt-get), RHEL/Fedora/CentOS(dnf), Arch(pacman), openSUSE(zypper)
+GUEST_UPDATE_CMD='
+set -e
+
+if command -v apk >/dev/null 2>&1; then
+    echo "OS: Alpine Linux"
+    apk update && apk upgrade
+
+elif command -v apt-get >/dev/null 2>&1; then
+    echo "OS: Debian/Ubuntu"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get dist-upgrade -y
+
+elif command -v dnf >/dev/null 2>&1; then
+    echo "OS: RHEL/CentOS/Fedora"
+    dnf update -y
+
+elif command -v pacman >/dev/null 2>&1; then
+    echo "OS: Arch Linux"
+    pacman -Syu --noconfirm
+
+elif command -v zypper >/dev/null 2>&1; then
+    echo "OS: openSUSE"
+    zypper refresh
+    zypper update -y
+
+else
+    echo "Unknown OS: Could not find a supported package manager."
+    exit 1
+fi
+'
 
 # Update LXCs (Direct Output)
 for CTID in $(pct list | awk 'NR>1 {print $1}'); do
@@ -23,10 +57,8 @@ for CTID in $(pct list | awk 'NR>1 {print $1}'); do
     if pct status "$CTID" | grep -q "status: running"; then
         echo -n -e "${YELLOW}[LXC $CTID]${NC} Updating... "
         echo "Updating [LXC $CTID]" >> "$LOGFILE"
-        pct exec "$CTID" -- sh -c '
-            if command -v apk >/dev/null; then apk update && apk upgrade;
-            elif command -v apt-get >/dev/null; then apt-get update && apt-get dist-upgrade -y;
-            else exit 1; fi' >> "$LOGFILE" 2>&1
+
+        pct exec "$CTID" -- sh -c "$GUEST_UPDATE_CMD" >> "$LOGFILE" 2>&1
         [ $? -eq 0 ] && echo -e "${GREEN}DONE${NC}" || echo -e "${RED}FAILED${NC}"
     fi
 done
@@ -37,16 +69,13 @@ for VMID in $(qm list | awk 'NR>1 {print $1}'); do
     if qm status "$VMID" | grep -q "status: running" && qm agent "$VMID" ping >/dev/null 2>&1; then
         echo -n -e "${BLUE}[VM $VMID]${NC} Updating... "
         echo "Updating [VM $VMID]" >> "$LOGFILE"
-        
-        # Capture JSON output and clean it for the log
-        RAW_JSON=$(qm guest exec "$VMID" -- sh -c '
-            if command -v apk >/dev/null; then apk update && apk upgrade;
-            elif command -v apt-get >/dev/null; then apt-get update && apt-get dist-upgrade -y;
-            else exit 1; fi' 2>&1)
-        
+
+        # Capture JSON output
+        RAW_JSON=$(qm guest exec "$VMID" -- sh -c "$GUEST_UPDATE_CMD" 2>&1)
+
         # EXTRACT text from JSON and convert \n to real newlines for the log
         echo "$RAW_JSON" | sed -n 's/.*"out-data" : "\(.*\)",/\1/p' | sed 's/\\n/\n/g' >> "$LOGFILE"
-        
+
         if echo "$RAW_JSON" | grep -q '"exitcode" : 0'; then
             echo -e "${GREEN}DONE${NC}"
         else
